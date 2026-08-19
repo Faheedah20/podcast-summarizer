@@ -67,7 +67,8 @@ st.set_page_config(
 st.sidebar.title("⚙️ Settings")
 if not groq_configured:
     st.sidebar.error(
-        "Groq is not configured. Put your real GROQ_API_KEY in the project's .env file."
+        "Groq is not configured. Locally, add GROQ_API_KEY to .env. "
+        "On Streamlit Cloud, add it under Manage app > Settings > Secrets."
     )
 transcription_method = st.sidebar.selectbox(
     "Transcription method",
