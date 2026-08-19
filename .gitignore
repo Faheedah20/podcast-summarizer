@@ -23,6 +23,7 @@ __pycache__/
 *.mpga
 *.txt
 !README.md
+!requirements.txt
 
 # OS and editor files
 .DS_Store
