@@ -8,9 +8,9 @@ import json
 from pathlib import Path
 from typing import Dict, Any
 
-from dotenv import load_dotenv
+from utils.config import load_project_env
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+load_project_env(Path(__file__).resolve().parent.parent)
 
 
 SYSTEM_PROMPT = """You are an expert meeting and podcast analyst.

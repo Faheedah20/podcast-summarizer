@@ -6,10 +6,18 @@ Streamlit frontend
 import os
 import streamlit as st
 from pathlib import Path
-from dotenv import load_dotenv
+
+from utils.config import load_project_env
 
 BASE_DIR = Path(__file__).resolve().parent
-load_dotenv(BASE_DIR / ".env", override=True)
+load_project_env(BASE_DIR)
+
+try:
+    for name, value in st.secrets.items():
+        if value is not None:
+            os.environ[name] = str(value)
+except Exception:
+    pass
 
 from utils.transcribe import transcribe_audio, save_uploaded_file
 from utils.summarize import summarize_transcript

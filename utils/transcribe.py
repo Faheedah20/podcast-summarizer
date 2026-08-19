@@ -13,9 +13,10 @@ from typing import Optional
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import streamlit as st
-from dotenv import load_dotenv
 
-load_dotenv(Path(__file__).resolve().parent.parent / ".env", override=True)
+from utils.config import load_project_env
+
+load_project_env(Path(__file__).resolve().parent.parent)
 
 
 @st.cache_resource(show_spinner="Loading the transcription model...")
