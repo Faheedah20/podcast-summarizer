@@ -23,3 +23,21 @@ The transcript is formatted with `[HH:MM:SS - HH:MM:SS]` ranges. The generated r
 Copy `.env.example` to `.env` and replace `your_groq_api_key_here` with your Groq key. A Groq key is enough for both transcription and summarization; an OpenAI key is only required when selecting OpenAI in the sidebar. The default Groq summarization model is `qwen/qwen3.6-27b`. Restart Streamlit after changing `.env`.
 
 Local transcription uses the English-specific `tiny.en` Whisper model, voice-activity detection, and single-pass decoding for faster CPU processing. The first local run downloads the model. For the fastest transcription, add `GROQ_API_KEY` or `OPENAI_API_KEY` to `.env` and select the matching provider; Groq is selected automatically when its key is available.
+
+### Deploy with Streamlit Cloud
+
+1. Sign in at [share.streamlit.io](https://share.streamlit.io) with GitHub.
+2. Choose **New app** and select `Faheedah20/podcast-summarizer`.
+3. Set the branch to `main` and the main file to `app.py`.
+4. Open **Advanced settings** and add this secret:
+
+```toml
+GROQ_API_KEY = "your_real_groq_key"
+LLM_PROVIDER = "groq"
+TRANSCRIPTION_METHOD = "groq"
+GROQ_MODEL = "qwen/qwen3.6-27b"
+```
+
+5. Click **Deploy**.
+
+Do not upload `.env` or place a real API key in GitHub. Add secrets only through Streamlit Cloud settings.
