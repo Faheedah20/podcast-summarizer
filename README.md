@@ -1,14 +1,5 @@
 ## Podcast Summarizer
 
-### Run locally
-
-```powershell
-cd C:\Users\pelum\Desktop\Podcast-summarizer
-.\.venv\Scripts\python.exe -m streamlit run app.py
-```
-
-Open `http://localhost:8501` in your browser.
-
 ### How to use
 
 1. Choose **Upload recording** and select an audio file, or choose **Record from microphone**.
