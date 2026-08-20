@@ -16,23 +16,11 @@ from utils.config import load_project_env
 load_project_env(Path(__file__).resolve().parent.parent)
 
 
-SYSTEM_PROMPT = """You are summarizing an uploaded recording.
-Focus only on what is clearly in the recording itself.
-Return only valid JSON with this exact shape and no explanation before or after it:
-{
-  "title": "Short title based on the recording",
-  "summary": "2 short sentences max explaining the main topic and takeaway from the recording",
-    "discussion_points": [{"timestamp": "HH:MM:SS", "topic": "Short topic", "details": "Brief detail"}]
-}
-
-Rules:
-- Keep the summary brief: 2 sentences maximum.
-- Include up to 3 important moments with timestamps from the transcript.
-- Use an empty discussion_points array when no timestamp is clearly available.
-- Focus on the recording's actual content, not generic meeting boilerplate.
-- Do not invent timestamps or details.
-- Do not include key points, insights, action items, speakers, or any other fields.
-- The summary should sound like a quick description of the uploaded recording.
+SYSTEM_PROMPT = """You are summarizing an uploaded podcast or recording.
+Focus only on what is clearly said in the recording.
+Return only a natural-language summary in 2 short sentences maximum.
+Do not return JSON, headings, timestamps, labels, analysis, reasoning, or instructions.
+The summary should directly explain the main topic and takeaway for the listener.
 """
 
 MAX_SUMMARY_SENTENCES = int(os.getenv("MAX_SUMMARY_SENTENCES", "2"))
@@ -99,7 +87,7 @@ def _call_groq(transcript: str) -> str:
                 {"role": "user", "content": f"Transcript:\n\n{_prepare_transcript_for_summary(transcript)}"}
             ],
             "temperature": 0.1,
-            "max_tokens": 220,
+            "max_tokens": 120,
         }
 
         try:
@@ -137,8 +125,7 @@ def _call_openai(transcript: str) -> str:
             {"role": "user", "content": f"Transcript:\n\n{_prepare_transcript_for_summary(transcript)}"}
         ],
         temperature=0.1,
-        max_tokens=220,
-        response_format={"type": "json_object"}
+        max_tokens=120
     )
     return response.choices[0].message.content
 
@@ -174,7 +161,7 @@ def summarize_transcript(transcript: str, provider: str = None) -> Dict[str, Any
 
     data.setdefault("title", "Recording summary")
     data["summary"] = _shorten_summary(str(data.get("summary", "")))
-    data["discussion_points"] = list(data.get("discussion_points", []) or [])[:2]
+    data["discussion_points"] = []
     return data
 
 
@@ -196,14 +183,26 @@ def _parse_json_response(raw: str) -> Dict[str, Any]:
 
 
 def _extract_summary_text(raw: str) -> str:
-    """Recover only the summary text when a model returns incomplete JSON."""
+    """Recover readable summary text from plain text or legacy JSON output."""
+    raw = (raw or "").strip()
     match = re.search(r'"summary"\s*:\s*"((?:\\.|[^"\\])*)', raw or "", re.DOTALL)
     if match:
         try:
             return json.loads(f'"{match.group(1)}"')
         except json.JSONDecodeError:
             return match.group(1)
-    return re.sub(r"[`{}\[\]]", "", raw or "").strip()
+    lines = []
+    for line in raw.splitlines():
+        lowered = line.strip().lower()
+        if any(phrase in lowered for phrase in [
+            "validate against constraints",
+            "draft json construction",
+            "reasoning:",
+            "analysis:",
+        ]):
+            continue
+        lines.append(line.strip().strip("`"))
+    return re.sub(r"\s+", " ", " ".join(lines)).strip(" {}[]")
 
 
 def _is_configured_key(name: str) -> bool:

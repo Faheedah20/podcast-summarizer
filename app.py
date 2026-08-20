@@ -27,19 +27,8 @@ groq_configured = bool(groq_key) and not groq_key.startswith("your_")
 
 
 def _format_readable_summary(result):
-    """Create a plain-text download containing only the summary and timestamps."""
-    lines = [result.get("title", "Summary"), "", result.get("summary", "")]
-
-    discussion_points = result.get("discussion_points", [])
-    if discussion_points:
-        lines.extend(["", "KEY DISCUSSION POINTS"])
-        for point in discussion_points:
-            lines.append(
-                f"- [{point.get('timestamp', 'Timestamp unavailable')}] "
-                f"{point.get('topic', 'Untitled discussion')}: {point.get('details', '')}"
-            )
-
-    return "\n".join(lines).strip()
+    """Create a plain-text download containing only the summary."""
+    return f"{result.get('title', 'Summary')}\n\n{result.get('summary', '')}".strip()
 
 st.set_page_config(
     page_title="AI Meeting & Podcast Summarizer",
@@ -116,7 +105,7 @@ if selected_file is not None:
                 st.error(f"Transcription failed ({transcription_method}): {type(e).__name__}: {e}")
                 st.stop()
 
-        with st.spinner("Generating summary and extracting action items…"):
+        with st.spinner("Generating a clear summary…"):
             try:
                 result = summarize_transcript(transcript, provider=llm_provider)
             except Exception as e:
@@ -128,15 +117,6 @@ if selected_file is not None:
 
         st.subheader("📄 Summary")
         st.write(result.get("summary", ""))
-
-        discussion_points = result.get("discussion_points", [])
-        if discussion_points:
-            st.subheader("🗣️ Key moments")
-            for point in discussion_points:
-                timestamp = point.get("timestamp", "Timestamp unavailable")
-                topic = point.get("topic", "Untitled discussion")
-                details = point.get("details", "")
-                st.markdown(f"**[{timestamp}] {topic}**  \n{details}")
 
         with st.expander("Show transcript"):
             st.text_area("Transcript", transcript, height=220, label_visibility="collapsed")

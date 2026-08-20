@@ -62,5 +62,17 @@ def test_reasoning_around_json_is_not_returned_to_users(mock_call):
         result = summarize_transcript("dummy transcript", provider="groq")
 
     assert result["summary"] == "The episode discusses a new product launch."
-    assert result["discussion_points"][0]["timestamp"] == "00:04:12"
+    assert result["discussion_points"] == []
     assert "validate against constraints" not in result["summary"].lower()
+
+
+@patch("utils.summarize._call_groq")
+def test_plain_summary_response_is_returned_without_timestamps(mock_call):
+    mock_call.return_value = "The episode explores how independent creators build sustainable audiences. It emphasizes consistency and understanding what listeners value."
+
+    with patch.dict(os.environ, {"GROQ_API_KEY": "test-key"}, clear=False):
+        result = summarize_transcript("dummy transcript", provider="groq")
+
+    assert "independent creators" in result["summary"]
+    assert result["discussion_points"] == []
+    assert "timestamp" not in result["summary"].lower()
