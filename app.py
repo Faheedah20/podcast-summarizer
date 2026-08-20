@@ -73,8 +73,8 @@ if not groq_configured:
 transcription_method = st.sidebar.selectbox(
     "Transcription method",
     options=["local", "groq", "openai"],
-    index=1 if os.getenv("GROQ_API_KEY") else 0,
-    help="Groq is fastest when GROQ_API_KEY is configured. Local uses a speed-optimized Whisper model."
+    index=1 if groq_configured else 0,
+    help="Groq is the fastest option when GROQ_API_KEY is configured. Local is the fallback for offline use."
 )
 
 llm_provider = st.sidebar.selectbox(
@@ -140,26 +140,20 @@ if selected_file is not None:
                 st.stop()
 
         st.success("Done!")
-        st.header(result.get("title", "Summary"))
+        st.header(result.get("title", "Recording summary"))
 
         st.subheader("📄 Summary")
         st.write(result.get("summary", ""))
 
         important_insights = result.get("important_insights", [])
         if important_insights:
-            st.subheader("💡 Important Insights")
+            st.subheader("💡 Quick takeaways")
             for insight in important_insights:
                 st.markdown(f"- {insight}")
 
-        key_points = result.get("key_points", [])
-        if key_points:
-            st.subheader("🔑 Key Points")
-            for point in key_points:
-                st.markdown(f"- {point}")
-
         discussion_points = result.get("discussion_points", [])
         if discussion_points:
-            st.subheader("🗣️ Key Discussion Points")
+            st.subheader("🗣️ Key moments")
             for point in discussion_points:
                 timestamp = point.get("timestamp", "Timestamp unavailable")
                 topic = point.get("topic", "Untitled discussion")
@@ -167,24 +161,17 @@ if selected_file is not None:
                 st.markdown(f"**[{timestamp}] {topic}**  \n{details}")
 
         action_items = result.get("action_items", [])
-        st.subheader("✅ Action Items")
         if action_items:
+            st.subheader("✅ Action items")
             for i, item in enumerate(action_items, 1):
                 task = item.get("task", "")
                 owner = item.get("owner", "Unassigned")
                 deadline = item.get("deadline")
                 deadline_str = f" | Deadline: {deadline}" if deadline else ""
                 st.markdown(f"**{i}. {task}**  \nOwner: {owner}{deadline_str}")
-        else:
-            st.info("No clear action items found.")
 
-        speakers = result.get("speakers", [])
-        if speakers:
-            st.subheader("🗣️ Speakers")
-            st.write(", ".join(speakers))
-
-        st.subheader("🕒 Transcript with timestamps")
-        st.text_area("Transcript", transcript, height=350, label_visibility="collapsed")
+        with st.expander("Show transcript"):
+            st.text_area("Transcript", transcript, height=220, label_visibility="collapsed")
 
         readable_summary = _format_readable_summary(result)
 

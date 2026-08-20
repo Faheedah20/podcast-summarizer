@@ -9,10 +9,17 @@ import tempfile
 from pathlib import Path
 from typing import Optional
 
+import requests
+
 # Windows may not support Hugging Face's symlink cache optimization.
 os.environ.setdefault("HF_HUB_DISABLE_SYMLINKS_WARNING", "1")
 
 import streamlit as st
+
+try:
+    from pydub import AudioSegment
+except Exception:  # pragma: no cover
+    AudioSegment = None
 
 from utils.config import load_project_env
 
@@ -32,20 +39,42 @@ def _load_local_model(model_size: str):
     )
 
 
+def compress_audio_file(audio_path: str, max_size_mb: float = 15.0) -> str:
+    """Reduce large uploaded audio files before transcription to keep runtime manageable."""
+    if AudioSegment is None:
+        return audio_path
+
+    file_size_mb = os.path.getsize(audio_path) / (1024 * 1024)
+    if file_size_mb <= max_size_mb:
+        return audio_path
+
+    try:
+        audio = AudioSegment.from_file(audio_path)
+    except Exception:
+        return audio_path
+
+    compressed = audio.set_channels(1).set_frame_rate(16000).set_sample_width(2)
+    with tempfile.NamedTemporaryFile(delete=False, suffix=".mp3") as tmp:
+        compressed.export(tmp.name, format="mp3", bitrate="64k", parameters=["-ar", "16000", "-ac", "1"])
+        return tmp.name
+
+
 def transcribe_local(audio_path: str, model_size: str = "tiny") -> str:
     """
     Transcribe using faster-whisper (runs locally, no API cost).
     model_size options: tiny, base, small, medium, large-v3
     """
-    model = _load_local_model(model_size)
+    model = _load_local_model(model_size or "tiny")
+    language = (os.getenv("TRANSCRIPTION_LANGUAGE") or "en").lower()
 
     segments, info = model.transcribe(
         audio_path,
         beam_size=1,
-        language="en",
+        language=language if language != "auto" else None,
         condition_on_previous_text=False,
         vad_filter=True,
         vad_parameters={"min_silence_duration_ms": 500},
+        word_timestamps=False,
     )
 
     transcript_parts = []
@@ -77,7 +106,9 @@ def transcribe_openai(audio_path: str) -> str:
 
 def transcribe_groq(audio_path: str) -> str:
     """Transcribe using Groq Whisper API (very fast)."""
-    from groq import Groq
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key or api_key.startswith("your_"):
+        raise ValueError("GROQ_API_KEY is missing or still set to the placeholder in .env")
 
     max_file_size = 25 * 1024 * 1024
     file_size = os.path.getsize(audio_path)
@@ -87,19 +118,26 @@ def transcribe_groq(audio_path: str) -> str:
             "or select Local transcription."
         )
 
-    client = Groq(
-        api_key=os.getenv("GROQ_API_KEY"),
-        timeout=300.0,
-        max_retries=3,
-    )
-
+    language = (os.getenv("TRANSCRIPTION_LANGUAGE", "en") or "en").lower()
     with open(audio_path, "rb") as audio_file:
-        transcription = client.audio.transcriptions.create(
-            file=audio_file,
-            model="whisper-large-v3-turbo",
-            response_format="verbose_json",
-            language="en"
+        response = requests.post(
+            "https://api.groq.com/openai/v1/audio/transcriptions",
+            headers={
+                "Authorization": f"Bearer {api_key}",
+            },
+            files={"file": (Path(audio_path).name, audio_file, "application/octet-stream")},
+            data={
+                "model": "whisper-large-v3-turbo",
+                "response_format": "verbose_json",
+                "language": "" if language == "auto" else language,
+            },
+            timeout=180,
         )
+
+    if response.status_code >= 400:
+        raise RuntimeError(f"Groq transcription failed: {response.status_code} {response.text}")
+
+    transcription = response.json()
     return _format_api_segments(transcription)
 
 
@@ -142,9 +180,12 @@ def transcribe_audio(audio_path: str, method: Optional[str] = None) -> str:
     """
     Main entry point.
     method: "local" | "openai" | "groq"
-    Falls back to environment variable or defaults to local.
+    Falls back to environment variable or defaults to Groq when configured.
     """
-    method = method or os.getenv("TRANSCRIPTION_METHOD", "local").lower()
+    method = (method or os.getenv("TRANSCRIPTION_METHOD") or ("groq" if _is_configured_key("GROQ_API_KEY") else "local")).lower()
+    compressed_path = compress_audio_file(audio_path, max_size_mb=float(os.getenv("MAX_AUDIO_MB", "15")))
+    if compressed_path != audio_path:
+        audio_path = compressed_path
 
     if method == "openai":
         if not _is_configured_key("OPENAI_API_KEY"):
@@ -156,8 +197,8 @@ def transcribe_audio(audio_path: str, method: Optional[str] = None) -> str:
             raise ValueError("GROQ_API_KEY is missing or still set to the placeholder in .env")
         return transcribe_groq(audio_path)
 
-    # Default: local faster-whisper
-    model_size = os.getenv("WHISPER_MODEL_SIZE", "tiny.en")
+    # Local fallback for offline use: use the smallest fast CPU model.
+    model_size = os.getenv("WHISPER_MODEL_SIZE", "tiny")
     return transcribe_local(audio_path, model_size=model_size)
 
 

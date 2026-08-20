@@ -5,76 +5,127 @@ Supports Groq (recommended free/fast) and OpenAI.
 
 import os
 import json
+import re
 from pathlib import Path
 from typing import Dict, Any
+
+import requests
 
 from utils.config import load_project_env
 
 load_project_env(Path(__file__).resolve().parent.parent)
 
 
-SYSTEM_PROMPT = """You are an expert meeting and podcast analyst.
-Your job is to turn a raw transcript into clear, actionable output.
-
-Always respond with valid JSON in exactly this structure:
+SYSTEM_PROMPT = """You are summarizing an uploaded recording.
+Focus only on what is clearly in the recording itself.
+Return valid JSON with this exact shape:
 {
-  "title": "A short descriptive title for the meeting/podcast",
-  "summary": "A concise 3-6 sentence executive summary",
-  "key_points": [
-    "Key point 1",
-    "Key point 2",
-    "..."
-  ],
-    "important_insights": [
-        "Insight grounded in the transcript, with a timestamp when available"
-    ],
-    "discussion_points": [
-        {
-            "timestamp": "HH:MM:SS",
-            "topic": "Main topic discussed",
-            "details": "Important details from this part of the conversation"
-        }
-    ],
-  "action_items": [
-    {
-      "task": "What needs to be done",
-      "owner": "Person responsible (or 'Unassigned' if not mentioned)",
-      "deadline": "Deadline if mentioned, otherwise null"
-    }
-  ],
-  "speakers": ["Speaker names if identifiable, otherwise empty list"]
+  "title": "Short title based on the recording",
+  "summary": "2 short sentences max explaining the main topic and takeaway from the recording",
+  "key_points": [],
+  "important_insights": [],
+  "discussion_points": [],
+  "action_items": [],
+  "speakers": []
 }
 
 Rules:
-- Be accurate. Do not invent information that is not in the transcript.
-- Action items should be specific and actionable.
-- Important insights should explain implications, conclusions, or notable takeaways.
-- Discussion points must cover the main topics and include the relevant transcript timestamp.
-- Use the timestamp shown at the start of transcript lines; do not invent precision.
-- If no clear action items exist, return an empty list.
-- If no important insights or discussion points exist, return an empty list.
-- Keep the summary neutral and professional.
+- Keep the summary brief: 2 sentences maximum.
+- Focus on the recording's actual content, not generic meeting boilerplate.
+- Do not invent details, speakers, or deadlines.
+- If an item is not clearly present, leave it empty.
+- Avoid action items, long notes, and unnecessary business-analysis language.
+- The summary should sound like a quick description of the uploaded recording.
 """
+
+MAX_SUMMARY_SENTENCES = int(os.getenv("MAX_SUMMARY_SENTENCES", "2"))
+MAX_TRANSCRIPT_CHARS = int(os.getenv("MAX_TRANSCRIPT_CHARS", "3000"))
+
+
+def _prepare_transcript_for_summary(transcript: str) -> str:
+    """Keep the transcript short enough for a fast, focused summary."""
+    text = (transcript or "").strip()
+    if len(text) <= MAX_TRANSCRIPT_CHARS:
+        return text
+
+    truncated = text[:MAX_TRANSCRIPT_CHARS].rsplit("\n", 1)[0].strip()
+    if not truncated:
+        return text[:MAX_TRANSCRIPT_CHARS]
+    return truncated + "\n[Transcript shortened for a quick summary.]"
+
+
+def _shorten_summary(summary: str) -> str:
+    """Trim long model output down to a recording-focused summary."""
+    cleaned = re.sub(r"\s+", " ", (summary or "")).strip()
+    if not cleaned:
+        return "This recording covers the main topic discussed in the audio."
+
+    sentences = [part.strip() for part in re.split(r"(?<=[.!?])\s+", cleaned) if part.strip()]
+    selected = []
+    for sentence in sentences:
+        lowered = sentence.lower()
+        if any(token in lowered for token in ["overall takeaway", "this section includes", "follow-up actions", "action items", "important insights"]):
+            continue
+        selected.append(sentence)
+        if len(selected) >= MAX_SUMMARY_SENTENCES:
+            break
+
+    if not selected:
+        return cleaned[:220].rstrip(". ") + "."
+
+    return " ".join(selected)
 
 
 def _call_groq(transcript: str) -> str:
-    from groq import Groq
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key or api_key.startswith("your_"):
+        raise ValueError("GROQ_API_KEY is missing or still set to the placeholder in .env")
 
-    client = Groq(api_key=os.getenv("GROQ_API_KEY"))
+    candidates = [
+        os.getenv("GROQ_MODEL"),
+        "qwen/qwen3.6-27b",
+        "groq/compound",
+        "openai/gpt-oss-20b",
+        "openai/gpt-oss-120b",
+    ]
+    seen = set()
 
-    request = {
-        "model": os.getenv("GROQ_MODEL", "qwen/qwen3.6-27b"),
-        "messages": [
-            {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Transcript:\n\n{transcript}"}
-        ],
-        "temperature": 0.2,
-    }
+    for model in candidates:
+        if not model or model in seen:
+            continue
+        seen.add(model)
 
-    # This model can reject forced JSON mode before generating a response.
-    response = client.chat.completions.create(**request)
+        payload = {
+            "model": model,
+            "messages": [
+                {"role": "system", "content": SYSTEM_PROMPT},
+                {"role": "user", "content": f"Transcript:\n\n{_prepare_transcript_for_summary(transcript)}"}
+            ],
+            "temperature": 0.1,
+            "max_tokens": 80,
+        }
 
-    return response.choices[0].message.content
+        try:
+            response = requests.post(
+                "https://api.groq.com/openai/v1/chat/completions",
+                headers={
+                    "Authorization": f"Bearer {api_key}",
+                    "Content-Type": "application/json",
+                },
+                json=payload,
+                timeout=60,
+            )
+            if response.status_code >= 400:
+                message = response.text
+                if "model_not_found" not in message.lower() and "404" not in message:
+                    response.raise_for_status()
+                continue
+            data = response.json()
+            return data["choices"][0]["message"]["content"]
+        except requests.RequestException:
+            continue
+
+    raise RuntimeError("Groq summarization failed: no valid Groq model was available for this request.")
 
 
 def _call_openai(transcript: str) -> str:
@@ -86,9 +137,10 @@ def _call_openai(transcript: str) -> str:
         model="gpt-4o-mini",
         messages=[
             {"role": "system", "content": SYSTEM_PROMPT},
-            {"role": "user", "content": f"Transcript:\n\n{transcript}"}
+            {"role": "user", "content": f"Transcript:\n\n{_prepare_transcript_for_summary(transcript)}"}
         ],
-        temperature=0.2,
+        temperature=0.1,
+        max_tokens=80,
         response_format={"type": "json_object"}
     )
     return response.choices[0].message.content
@@ -114,7 +166,7 @@ def summarize_transcript(transcript: str, provider: str = None) -> Dict[str, Any
         data = _parse_json_response(raw)
     except json.JSONDecodeError:
         data = {
-            "title": "Summary",
+            "title": "Recording summary",
             "summary": raw,
             "key_points": [],
             "important_insights": [],
@@ -123,14 +175,13 @@ def summarize_transcript(transcript: str, provider: str = None) -> Dict[str, Any
             "speakers": []
         }
 
-    data.setdefault("title", "Untitled")
-    data.setdefault("summary", "")
-    data.setdefault("key_points", [])
-    data.setdefault("important_insights", [])
-    data.setdefault("discussion_points", [])
-    data.setdefault("action_items", [])
-    data.setdefault("speakers", [])
-
+    data.setdefault("title", "Recording summary")
+    data["summary"] = _shorten_summary(str(data.get("summary", "")))
+    data["key_points"] = list(data.get("key_points", []) or [])[:3]
+    data["important_insights"] = list(data.get("important_insights", []) or [])[:2]
+    data["discussion_points"] = list(data.get("discussion_points", []) or [])[:2]
+    data["action_items"] = list(data.get("action_items", []) or [])[:3]
+    data["speakers"] = list(data.get("speakers", []) or [])[:5]
     return data
 
 
