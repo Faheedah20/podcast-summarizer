@@ -18,23 +18,20 @@ load_project_env(Path(__file__).resolve().parent.parent)
 
 SYSTEM_PROMPT = """You are summarizing an uploaded recording.
 Focus only on what is clearly in the recording itself.
-Return valid JSON with this exact shape:
+Return only valid JSON with this exact shape and no explanation before or after it:
 {
   "title": "Short title based on the recording",
   "summary": "2 short sentences max explaining the main topic and takeaway from the recording",
-  "key_points": [],
-  "important_insights": [],
-  "discussion_points": [],
-  "action_items": [],
-  "speakers": []
+    "discussion_points": [{"timestamp": "HH:MM:SS", "topic": "Short topic", "details": "Brief detail"}]
 }
 
 Rules:
 - Keep the summary brief: 2 sentences maximum.
+- Include up to 3 important moments with timestamps from the transcript.
+- Use an empty discussion_points array when no timestamp is clearly available.
 - Focus on the recording's actual content, not generic meeting boilerplate.
-- Do not invent details, speakers, or deadlines.
-- If an item is not clearly present, leave it empty.
-- Avoid action items, long notes, and unnecessary business-analysis language.
+- Do not invent timestamps or details.
+- Do not include key points, insights, action items, speakers, or any other fields.
 - The summary should sound like a quick description of the uploaded recording.
 """
 
@@ -102,7 +99,7 @@ def _call_groq(transcript: str) -> str:
                 {"role": "user", "content": f"Transcript:\n\n{_prepare_transcript_for_summary(transcript)}"}
             ],
             "temperature": 0.1,
-            "max_tokens": 80,
+            "max_tokens": 220,
         }
 
         try:
@@ -140,7 +137,7 @@ def _call_openai(transcript: str) -> str:
             {"role": "user", "content": f"Transcript:\n\n{_prepare_transcript_for_summary(transcript)}"}
         ],
         temperature=0.1,
-        max_tokens=80,
+        max_tokens=220,
         response_format={"type": "json_object"}
     )
     return response.choices[0].message.content
@@ -167,7 +164,7 @@ def summarize_transcript(transcript: str, provider: str = None) -> Dict[str, Any
     except json.JSONDecodeError:
         data = {
             "title": "Recording summary",
-            "summary": raw,
+            "summary": _extract_summary_text(raw),
             "key_points": [],
             "important_insights": [],
             "discussion_points": [],
@@ -177,21 +174,36 @@ def summarize_transcript(transcript: str, provider: str = None) -> Dict[str, Any
 
     data.setdefault("title", "Recording summary")
     data["summary"] = _shorten_summary(str(data.get("summary", "")))
-    data["key_points"] = list(data.get("key_points", []) or [])[:3]
-    data["important_insights"] = list(data.get("important_insights", []) or [])[:2]
     data["discussion_points"] = list(data.get("discussion_points", []) or [])[:2]
-    data["action_items"] = list(data.get("action_items", []) or [])[:3]
-    data["speakers"] = list(data.get("speakers", []) or [])[:5]
     return data
 
 
 def _parse_json_response(raw: str) -> Dict[str, Any]:
-    """Parse JSON returned either directly or inside a Markdown code fence."""
-    cleaned = raw.strip()
+    """Parse the first JSON object even when a model adds surrounding text."""
+    cleaned = (raw or "").strip()
     if cleaned.startswith("```"):
         cleaned = cleaned.split("\n", 1)[1] if "\n" in cleaned else cleaned
         cleaned = cleaned.rsplit("```", 1)[0].strip()
-    return json.loads(cleaned)
+
+    try:
+        return json.loads(cleaned)
+    except json.JSONDecodeError:
+        start = cleaned.find("{")
+        end = cleaned.rfind("}")
+        if start < 0 or end <= start:
+            raise
+        return json.loads(cleaned[start:end + 1])
+
+
+def _extract_summary_text(raw: str) -> str:
+    """Recover only the summary text when a model returns incomplete JSON."""
+    match = re.search(r'"summary"\s*:\s*"((?:\\.|[^"\\])*)', raw or "", re.DOTALL)
+    if match:
+        try:
+            return json.loads(f'"{match.group(1)}"')
+        except json.JSONDecodeError:
+            return match.group(1)
+    return re.sub(r"[`{}\[\]]", "", raw or "").strip()
 
 
 def _is_configured_key(name: str) -> bool:

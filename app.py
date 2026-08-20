@@ -27,16 +27,8 @@ groq_configured = bool(groq_key) and not groq_key.startswith("your_")
 
 
 def _format_readable_summary(result):
-    """Create a plain-text download without exposing the internal JSON structure."""
-    lines = [result.get("title", "Summary"), "", "SUMMARY", result.get("summary", "")]
-
-    sections = [
-        ("KEY POINTS", result.get("key_points", [])),
-        ("IMPORTANT INSIGHTS", result.get("important_insights", [])),
-    ]
-    for heading, items in sections:
-        if items:
-            lines.extend(["", heading, *[f"- {item}" for item in items]])
+    """Create a plain-text download containing only the summary and timestamps."""
+    lines = [result.get("title", "Summary"), "", result.get("summary", "")]
 
     discussion_points = result.get("discussion_points", [])
     if discussion_points:
@@ -45,14 +37,6 @@ def _format_readable_summary(result):
             lines.append(
                 f"- [{point.get('timestamp', 'Timestamp unavailable')}] "
                 f"{point.get('topic', 'Untitled discussion')}: {point.get('details', '')}"
-            )
-
-    action_items = result.get("action_items", [])
-    if action_items:
-        lines.extend(["", "ACTION ITEMS"])
-        for item in action_items:
-            lines.append(
-                f"- {item.get('task', '')} | Owner: {item.get('owner', 'Unassigned')}"
             )
 
     return "\n".join(lines).strip()
@@ -145,12 +129,6 @@ if selected_file is not None:
         st.subheader("📄 Summary")
         st.write(result.get("summary", ""))
 
-        important_insights = result.get("important_insights", [])
-        if important_insights:
-            st.subheader("💡 Quick takeaways")
-            for insight in important_insights:
-                st.markdown(f"- {insight}")
-
         discussion_points = result.get("discussion_points", [])
         if discussion_points:
             st.subheader("🗣️ Key moments")
@@ -159,16 +137,6 @@ if selected_file is not None:
                 topic = point.get("topic", "Untitled discussion")
                 details = point.get("details", "")
                 st.markdown(f"**[{timestamp}] {topic}**  \n{details}")
-
-        action_items = result.get("action_items", [])
-        if action_items:
-            st.subheader("✅ Action items")
-            for i, item in enumerate(action_items, 1):
-                task = item.get("task", "")
-                owner = item.get("owner", "Unassigned")
-                deadline = item.get("deadline")
-                deadline_str = f" | Deadline: {deadline}" if deadline else ""
-                st.markdown(f"**{i}. {task}**  \nOwner: {owner}{deadline_str}")
 
         with st.expander("Show transcript"):
             st.text_area("Transcript", transcript, height=220, label_visibility="collapsed")
